@@ -24,7 +24,7 @@
   },
   "homepage": "https://github.com/EldinBegano/MLPEditor#readme",
   "devDependencies": {
-    "electron": "^27.3.11",
+    "electron": "^35.7.5",
     "electron-packager": "^17.1.2"
   }
 }
