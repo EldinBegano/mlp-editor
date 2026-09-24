@@ -1,5 +1,9 @@
 let currentFileName = null;
 let currentFileHandle = null;
+// Extension of the document's content (inside an encrypted .mlp: the one stored in it), which decides how Save writes it
+let currentExt = 'html';
+let isEncrypted = false;
+let mlpKey = null;
 let isDirty = false;
 let words = new Set();
 let suggestionBox;
@@ -77,6 +81,15 @@ document.addEventListener("DOMContentLoaded", function() {
         }
     });
 
+    document.addEventListener('keydown', (event) => {
+        if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 's') {
+            event.preventDefault();
+            if (!document.getElementById('appDialog').open) {
+                saveFile();
+            }
+        }
+    });
+
     window.addEventListener('beforeunload', (event) => {
         if (isDirty) {
             event.preventDefault();
@@ -93,6 +106,8 @@ document.addEventListener("DOMContentLoaded", function() {
         this.value = '';
     });
     document.getElementById('saveBtn').addEventListener('click', saveFile);
+    document.getElementById('saveAsBtn').addEventListener('click', () => saveFileAs());
+    document.getElementById('encryptBtn').addEventListener('click', encryptFile);
     document.getElementById('imageBtn').addEventListener('click', () => {
         document.getElementById('imageUpload').click();
     });
@@ -164,15 +179,36 @@ document.addEventListener("DOMContentLoaded", function() {
     colorPreview.style.backgroundColor = currentTextColor;
 });
 
+// Decrypted images and PDFs can't be edited, but the browser can show them
+const VIEWABLE_TYPES = {
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    gif: 'image/gif',
+    webp: 'image/webp',
+    bmp: 'image/bmp',
+    avif: 'image/avif',
+    pdf: 'application/pdf'
+};
+
+const SAVE_TYPES = [
+    { description: 'HTML document', accept: { 'text/html': ['.html'] } },
+    { description: 'Text file', accept: { 'text/plain': ['.txt'] } },
+    { description: 'Markdown', accept: { 'text/markdown': ['.md'] } },
+    { description: 'Encrypted MLP file', accept: { 'application/octet-stream': ['.mlp'] } }
+];
+
+const KEYFILE_HINT = 'mlp keeps it at ~/.config/mask-decryption/keyfile on Linux (Ctrl+H in the file dialog shows hidden folders), ' +
+    '~/Library/Application Support/mask-decryption/keyfile on macOS and %AppData%\\mask-decryption\\keyfile on Windows. ' +
+    'A copy made with "mlp keyfile export" works too. The key is remembered in this browser.';
+
 function newFile() {
     if (!confirmDiscard()) {
         return;
     }
     editor.innerHTML = "Start writing here...";
     editor.classList.remove('rendered');
-    currentFileName = null;
-    currentFileHandle = null;
-    setDirty(false);
+    setCurrentFile(null, null, 'html', false);
     updateWordCount();
     updateStatusBar('New file created');
 }
@@ -194,55 +230,236 @@ async function openFileDialog() {
 }
 
 async function openFile(file, handle = null) {
+    let bytes;
     try {
-        // Same heuristic as git: a NUL byte in the first 8000 bytes means binary
-        const head = new Uint8Array(await file.slice(0, 8000).arrayBuffer());
-        if (head.includes(0)) {
-            updateStatusBar(`Cannot open ${file.name}: not a text file`);
-            return;
-        }
-        if (!confirmDiscard()) {
-            return;
-        }
-        const text = (await file.text()).replace(/\r\n?/g, '\n');
-        renderFileContent(text, file.name);
+        bytes = new Uint8Array(await file.arrayBuffer());
     } catch (err) {
         updateStatusBar(`Error opening file: ${err.message}`);
         return;
     }
 
-    currentFileName = file.name;
-    currentFileHandle = handle;
-    setDirty(false);
-    updateWordList();
-    updateWordCount();
-    updateStatusBar(`File opened: ${file.name}`);
+    if (isEncryptedMlp(bytes)) {
+        await openEncryptedFile(file.name, bytes, handle);
+        return;
+    }
+    if (isBinary(bytes)) {
+        updateStatusBar(`Cannot open ${file.name}: not a text file`);
+        return;
+    }
+    if (!confirmDiscard()) {
+        return;
+    }
+
+    const ext = fileExtension(file.name);
+    renderFileContent(decodeText(bytes), ext);
+    if (ext.toLowerCase() === 'mlp') {
+        // Old editor files are unencrypted HTML; saving turns them into encrypted .mlp files
+        setCurrentFile(file.name, handle, 'html', true);
+        updateStatusBar(`Opened ${file.name} (old unencrypted format, saving will encrypt it)`);
+    } else {
+        setCurrentFile(file.name, handle, ext, false);
+        updateStatusBar(`File opened: ${file.name}`);
+    }
 }
 
-function renderFileContent(text, fileName) {
-    const extension = fileName.includes('.') ? fileName.split('.').pop().toLowerCase() : '';
+async function openEncryptedFile(fileName, bytes, handle) {
+    let result;
+    try {
+        readMlpHeader(bytes);
+        let key = await getKey(`${fileName} is encrypted. Choose your mlp keyfile to open it.`);
+        while (!result) {
+            if (!key) {
+                updateStatusBar('Opening cancelled');
+                return;
+            }
+            try {
+                result = await decryptMlp(bytes, key);
+            } catch (err) {
+                if (!(err instanceof MlpAuthError)) {
+                    throw err;
+                }
+                key = await askForKeyfile(`Could not decrypt ${fileName}: wrong key, or the file is damaged.`);
+            }
+        }
+    } catch (err) {
+        updateStatusBar(`Cannot open ${fileName}: ${err.message}`);
+        return;
+    }
+
+    const type = VIEWABLE_TYPES[result.ext.toLowerCase()];
+    if (type) {
+        openInNewTab(result.data, type, fileName);
+        return;
+    }
+    if (isBinary(result.data)) {
+        updateStatusBar(`${fileName} contains a binary file${result.ext ? ` (.${result.ext})` : ''}, which can't be shown here. Use "mlp decrypt" instead.`);
+        return;
+    }
+    if (!confirmDiscard()) {
+        return;
+    }
+
+    renderFileContent(decodeText(result.data), result.ext);
+    setCurrentFile(fileName, handle, result.ext, true);
+    updateStatusBar(`Decrypted ${fileName}`);
+}
+
+async function openInNewTab(data, type, fileName) {
+    const url = URL.createObjectURL(new Blob([data], { type }));
+    let opened = window.open(url, '_blank') !== null;
+    if (!opened) {
+        // Browsers only allow new tabs right after a click, and that click may be too long ago (or was a drop)
+        opened = await showDialog(`${fileName} was decrypted, but the browser blocked opening it in a new tab.`, [
+            { label: 'Open in new tab', value: 'open', onClick: () => window.open(url, '_blank') },
+            { label: 'Close', value: 'close' }
+        ]) === 'open';
+    }
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    if (opened) {
+        updateStatusBar(`Opened decrypted ${fileName} in a new tab`);
+    }
+}
+
+async function getKey(reason) {
+    if (!mlpKey) {
+        mlpKey = await loadStoredKey().catch(() => null);
+    }
+    return mlpKey || askForKeyfile(reason);
+}
+
+async function askForKeyfile(message) {
+    while (true) {
+        let picked = Promise.resolve(null);
+        const buttons = [{
+            label: 'Choose keyfile…',
+            value: 'choose',
+            onClick: () => {
+                picked = chooseFile(document.getElementById('keyfileInput'));
+            }
+        }];
+        if (mlpKey) {
+            buttons.push({ label: 'Forget remembered key', value: 'forget' });
+        }
+        buttons.push({ label: 'Cancel', value: 'cancel' });
+
+        const choice = await showDialog(message, buttons, KEYFILE_HINT);
+        if (choice === 'forget') {
+            mlpKey = null;
+            await forgetStoredKey().catch(() => {});
+            message = 'The remembered key was forgotten. Choose a keyfile to continue.';
+            continue;
+        }
+        const file = choice === 'choose' ? await picked : null;
+        if (!file) {
+            return null;
+        }
+
+        try {
+            mlpKey = await importKeyfile(file);
+        } catch (err) {
+            message = err.message;
+            continue;
+        }
+        // Remembering is best effort: IndexedDB can be unavailable, e.g. in private windows
+        await storeKey(mlpKey).catch(() => {});
+        return mlpKey;
+    }
+}
+
+function chooseFile(input) {
+    return new Promise(resolve => {
+        input.onchange = () => {
+            resolve(input.files[0] || null);
+            input.value = '';
+        };
+        input.oncancel = () => resolve(null);
+        input.click();
+    });
+}
+
+function showDialog(message, buttons, hint = '') {
+    const dialog = document.getElementById('appDialog');
+    const paragraphs = [message, hint].filter(Boolean).map((text, i) => {
+        const paragraph = document.createElement('p');
+        paragraph.textContent = text;
+        paragraph.classList.toggle('hint', i === 1);
+        return paragraph;
+    });
+    document.getElementById('dialogText').replaceChildren(...paragraphs);
+
+    document.getElementById('dialogButtons').replaceChildren(...buttons.map(({ label, value, onClick }, i) => {
+        const button = document.createElement('button');
+        button.textContent = label;
+        button.classList.toggle('primary', i === 0);
+        button.addEventListener('click', () => {
+            if (onClick) {
+                onClick();
+            }
+            dialog.close(value);
+        });
+        return button;
+    }));
+
+    dialog.returnValue = '';
+    dialog.showModal();
+    return new Promise(resolve => {
+        dialog.addEventListener('close', () => resolve(dialog.returnValue || 'cancel'), { once: true });
+    });
+}
+
+function renderFileContent(text, ext) {
     // No <style> (would restyle the whole app) and no ids (could shadow the app's own elements)
     const sanitizeOptions = { FORBID_TAGS: ['style'], FORBID_ATTR: ['id'] };
 
     // The editor is pre-wrap; markdown/HTML sources expect normal whitespace collapsing between tags
     editor.classList.remove('rendered');
-    switch (extension) {
+    if (ext.toLowerCase() === 'mlp') {
+        // Old editor files: HTML the editor wrote itself, in pre-wrap mode
+        editor.innerHTML = DOMPurify.sanitize(text, sanitizeOptions);
+    } else {
+        switch (formatForExt(ext)) {
+            case 'markdown':
+                editor.innerHTML = DOMPurify.sanitize(marked.parse(text), sanitizeOptions);
+                editor.classList.add('rendered');
+                break;
+            case 'html':
+                editor.innerHTML = DOMPurify.sanitize(text, sanitizeOptions);
+                editor.classList.add('rendered');
+                break;
+            default:
+                editor.textContent = text;
+        }
+    }
+    updateWordList();
+    updateWordCount();
+}
+
+function formatForExt(ext) {
+    switch (ext.toLowerCase()) {
         case 'md':
         case 'markdown':
-            editor.innerHTML = DOMPurify.sanitize(marked.parse(text), sanitizeOptions);
-            editor.classList.add('rendered');
-            break;
+            return 'markdown';
         case 'html':
         case 'htm':
-            editor.innerHTML = DOMPurify.sanitize(text, sanitizeOptions);
-            editor.classList.add('rendered');
-            break;
-        case 'mlp':
-            editor.innerHTML = DOMPurify.sanitize(text, sanitizeOptions);
-            break;
+            return 'html';
         default:
-            editor.textContent = text;
+            return 'text';
     }
+}
+
+// Same rule as mlp: a leading dot (.env) is a dotfile, not an extension
+function fileExtension(fileName) {
+    const dot = fileName.lastIndexOf('.');
+    return dot > 0 ? fileName.slice(dot + 1) : '';
+}
+
+// Same heuristic as git: a NUL byte in the first 8000 bytes means binary
+function isBinary(bytes) {
+    return bytes.subarray(0, 8000).includes(0);
+}
+
+function decodeText(bytes) {
+    return new TextDecoder().decode(bytes).replace(/\r\n?/g, '\n');
 }
 
 function confirmDiscard() {
@@ -254,13 +471,181 @@ function setDirty(dirty) {
     document.title = `${isDirty ? '*' : ''}${currentFileName ? currentFileName + ' – ' : ''}MLP Text Editor`;
 }
 
-function saveFile() {
-    if (editor.innerHTML === "Start writing here...") {
+function setCurrentFile(fileName, handle, ext, encrypted) {
+    currentFileName = fileName;
+    currentFileHandle = handle;
+    currentExt = ext;
+    isEncrypted = encrypted;
+    document.getElementById('encryptBtn').classList.toggle('active', encrypted);
+    setDirty(false);
+}
+
+function isEditorEmpty() {
+    return editor.innerHTML === "Start writing here...";
+}
+
+async function saveFile() {
+    if (isEditorEmpty()) {
+        updateStatusBar('Nothing to save');
+        return;
+    }
+    if (!currentFileName || (!currentFileHandle && window.showSaveFilePicker)) {
+        await saveFileAs();
+        return;
+    }
+    await writeDocument(currentFileName, currentFileHandle, currentExt, isEncrypted);
+}
+
+async function saveFileAs(suggestedName = currentFileName || `untitled.${currentExt}`) {
+    if (isEditorEmpty()) {
         updateStatusBar('Nothing to save');
         return;
     }
 
-    updateStatusBar('File saving not available in browser mode');
+    let fileName;
+    let handle = null;
+    if (window.showSaveFilePicker) {
+        try {
+            handle = await window.showSaveFilePicker({ suggestedName, types: SAVE_TYPES });
+        } catch (err) {
+            if (err.name !== 'AbortError') {
+                updateStatusBar(`Error saving file: ${err.message}`);
+            }
+            return;
+        }
+        fileName = handle.name;
+    } else {
+        fileName = prompt('Save as', suggestedName);
+        if (!fileName) {
+            return;
+        }
+    }
+
+    // The chosen extension picks the format; a .mlp keeps the current content format inside it
+    const encrypted = fileExtension(fileName).toLowerCase() === 'mlp';
+    await writeDocument(fileName, handle, encrypted ? currentExt : fileExtension(fileName), encrypted);
+}
+
+function encryptFile() {
+    if (isEncrypted && currentFileName) {
+        return saveFile();
+    }
+    return saveFileAs(mlpFileName(currentFileName || `untitled.${currentExt}`));
+}
+
+// Same naming as "mlp encrypt": notes.txt -> notes.mlp, README -> README.mlp
+function mlpFileName(fileName) {
+    const ext = fileExtension(fileName);
+    return (ext ? fileName.slice(0, -(ext.length + 1)) : fileName) + '.mlp';
+}
+
+async function writeDocument(fileName, handle, ext, encrypted) {
+    // Asked first, while the click (or Ctrl+S) that started the save still counts as user activation
+    if (handle && !(await hasWritePermission(handle))) {
+        updateStatusBar(`No permission to write ${fileName}`);
+        return;
+    }
+    const format = formatForExt(ext);
+    if (!confirmLossyFormat(format)) {
+        return;
+    }
+
+    try {
+        let bytes = new TextEncoder().encode(serializeEditor(format));
+        if (encrypted) {
+            const key = await getKey('To save an encrypted .mlp, choose your mlp keyfile. No keyfile yet? Create one with "mlp keygen".');
+            if (!key) {
+                updateStatusBar('Saving cancelled');
+                return;
+            }
+            bytes = await encryptMlp(bytes, ext, key);
+        }
+
+        if (handle) {
+            const writable = await handle.createWritable();
+            await writable.write(bytes);
+            await writable.close();
+        } else {
+            downloadFile(bytes, fileName);
+        }
+    } catch (err) {
+        updateStatusBar(`Error saving file: ${err.message}`);
+        return;
+    }
+
+    setCurrentFile(fileName, handle, ext, encrypted);
+    updateStatusBar(`Saved ${fileName}${encrypted ? ' (encrypted)' : ''}`);
+}
+
+async function hasWritePermission(handle) {
+    const options = { mode: 'readwrite' };
+    try {
+        return (await handle.queryPermission(options)) === 'granted' || (await handle.requestPermission(options)) === 'granted';
+    } catch {
+        return false;
+    }
+}
+
+function confirmLossyFormat(format) {
+    if (format === 'markdown' && editor.querySelector('font, u, :not(img)[style]')) {
+        return confirm("Colors, underline and fonts can't be saved in Markdown and will be lost. Save anyway?");
+    }
+    if (format === 'text' && editor.querySelector(':not(div, p, br, span), [style]')) {
+        return confirm("Formatting and images can't be saved in a text file and will be lost. Save anyway?");
+    }
+    return true;
+}
+
+function serializeEditor(format) {
+    if (format === 'text') {
+        return editor.innerText;
+    }
+    if (format === 'markdown') {
+        return htmlToMarkdown();
+    }
+    // Keep the editor's own pre-wrap whitespace when the file is opened in a normal browser
+    const body = editor.classList.contains('rendered') ? editor.innerHTML : `<div style="white-space: pre-wrap">${editor.innerHTML}</div>`;
+    return `<!DOCTYPE html>\n<html>\n<head>\n<meta charset="utf-8">\n</head>\n<body>\n${body}\n</body>\n</html>\n`;
+}
+
+function htmlToMarkdown() {
+    const content = editor.cloneNode(true);
+    if (!editor.classList.contains('rendered')) {
+        // Plain text keeps its line breaks as "\n" (pre-wrap), which turndown would collapse; make them <br>
+        const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
+        const textNodes = [];
+        while (walker.nextNode()) {
+            textNodes.push(walker.currentNode);
+        }
+        textNodes.filter(node => node.data.includes('\n') && !node.parentElement.closest('pre')).forEach(node => {
+            node.replaceWith(...node.data.split('\n').flatMap((line, i) => i ? [document.createElement('br'), line] : [line]));
+        });
+    }
+
+    const turndown = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced', bulletListMarker: '-' });
+    turndown.use(turndownPluginGfm.gfm);
+    // turndown's default "-   item" is valid but would rewrite every list; keep the usual "- item" / "1. item"
+    turndown.addRule('listItem', {
+        filter: 'li',
+        replacement: (content, node) => {
+            const parent = node.parentNode;
+            const start = parent.getAttribute('start');
+            const prefix = parent.nodeName === 'OL' ? `${(start ? Number(start) : 1) + [...parent.children].indexOf(node)}. ` : '- ';
+            const isParagraph = /\n$/.test(content);
+            content = content.replace(/^\n+|\n+$/g, '') + (isParagraph ? '\n' : '');
+            return prefix + content.replace(/\n/g, '\n' + ' '.repeat(prefix.length)) + (node.nextSibling ? '\n' : '');
+        }
+    });
+    return turndown.turndown(content) + '\n';
+}
+
+function downloadFile(bytes, fileName) {
+    const url = URL.createObjectURL(new Blob([bytes]));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 
 function insertImage(event) {
@@ -306,9 +691,12 @@ function handleDrop(event) {
 
     if (file.type.startsWith('image/')) {
         insertImageFile(file);
-    } else {
-        openFile(file);
+        return;
     }
+    // Only available during the event; it lets Save write back to the dropped file (Chromium)
+    const item = event.dataTransfer.items[0];
+    const handlePromise = item && item.getAsFileSystemHandle ? item.getAsFileSystemHandle() : Promise.resolve(null);
+    handlePromise.catch(() => null).then(handle => openFile(file, handle && handle.kind === 'file' ? handle : null));
 }
 
 function updateWordList() {

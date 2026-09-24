@@ -48,7 +48,8 @@ body {
     background-color: #3d3d3d;
     border-radius: 4px 4px 0 0;
     border-bottom: 1px solid #555;
-    height: 36px;
+    min-height: 36px;
+    flex-wrap: wrap;
     width: 100%;
     box-sizing: border-box;
     transition: background-color 0.3s ease, border-color 0.3s ease;
@@ -65,8 +66,9 @@ body {
     background-color: #3d3d3d;
     color: #ddd;
     border: none;
-    padding: 6px 12px;
+    padding: 6px 10px;
     font-size: 13px;
+    white-space: nowrap;
     cursor: pointer;
     border-radius: 3px;
     transition: background-color 0.2s ease, color 0.3s ease;
@@ -226,6 +228,85 @@ body {
   
   body.light-mode #editor a {
     color: #0366d6;
+  }
+
+  #appDialog {
+    max-width: 460px;
+    padding: 16px 20px;
+    background-color: #2e2e2e;
+    color: #ddd;
+    border: 1px solid #555;
+    border-radius: 6px;
+    font-size: 14px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  }
+
+  body.light-mode #appDialog {
+    background-color: #ffffff;
+    color: #333;
+    border-color: #ccc;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  }
+
+  #appDialog::backdrop {
+    background-color: rgba(0, 0, 0, 0.5);
+  }
+
+  #dialogText p {
+    margin: 0 0 10px 0;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+  }
+
+  #dialogText p.hint {
+    font-size: 12px;
+    opacity: 0.75;
+  }
+
+  #dialogButtons {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 16px;
+  }
+
+  #dialogButtons button {
+    background-color: #3d3d3d;
+    color: #ddd;
+    border: none;
+    padding: 6px 12px;
+    font-size: 13px;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+  }
+
+  #dialogButtons button:hover {
+    background-color: #4d4d4d;
+  }
+
+  #dialogButtons button.primary {
+    background-color: #0e639c;
+    color: #ffffff;
+  }
+
+  #dialogButtons button.primary:hover {
+    background-color: #1177bb;
+  }
+
+  body.light-mode #dialogButtons button {
+    background-color: #d0d0d0;
+    color: #333;
+  }
+
+  body.light-mode #dialogButtons button:hover {
+    background-color: #c0c0c0;
+  }
+
+  body.light-mode #dialogButtons button.primary {
+    background-color: #0078d7;
+    color: #ffffff;
   }
   
   .image-preview {

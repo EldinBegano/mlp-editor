@@ -1,18 +1,25 @@
 # MLPEditor
 
-MLPEditor is a simple web-based text editor with image insertion, saving and loading files. It saves files as .mlp (Masked Language Package), this file type doest't work anywhere else except the MLP editor.
+MLPEditor is a simple browser-based text editor with image insertion, Markdown and HTML support, and encrypted .mlp files. An .mlp file (Masked Language Package) is encrypted with https://github.com/EldinBegano/mask-decryption[mlp], so the same files can be opened here and with the mlp command line tool.
 
 ## Features
 
-* Image Insertion: Insert Images via file upload or drag and drop
-* Save Content: Save your editor content as an mlp file that you can download.
 * Open Files: Open .mlp, .txt, .md, .html or any other text file with the Open button or by dragging it into the editor. Markdown and HTML are shown formatted.
+* Save Files: Save writes the file back in its own format (Markdown is converted back from the formatted view), Save As saves a copy under a new name, and the file extension picks the format. Ctrl+S saves too.
+* Encrypted .mlp Files: Opening an .mlp decrypts it, and saving encrypts it again. The Encrypt button saves any document as an encrypted .mlp. Images and PDFs inside an .mlp open in a new tab.
+* Keyfile: The first time you need it, choose your mlp keyfile (`~/.config/mask-decryption/keyfile` on Linux, or a copy made with `mlp keyfile export`). It is remembered in the browser. No keyfile yet? Create one with `mlp keygen`.
+* Old .mlp Files: Files saved by earlier versions of the editor are still opened, and saving them turns them into encrypted .mlp files.
+* Image Insertion: Insert Images via file upload or drag and drop
 
 ## How to Run
 
+* Use it online at https://eldinbegano.github.io/mlp-editor/
+
+or
+
 * Clone the project with
 ----
-git clone https://github.com/EldinBegano/MLPEditor.git
+git clone https://github.com/EldinBegano/mlp-editor.git
 ----
 
 * Open the index.html in your browser

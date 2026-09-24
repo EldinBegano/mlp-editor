@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://fonts.googleapis.com; font-src 'self' https://cdnjs.cloudflare.com https://fonts.gstatic.com; connect-src https://fonts.googleapis.com https://fonts.gstatic.com">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; img-src 'self' data:; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://fonts.googleapis.com; font-src 'self' https://cdnjs.cloudflare.com https://fonts.gstatic.com; connect-src https://fonts.googleapis.com https://fonts.gstatic.com">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MLP Text Editor</title>
     <link rel="shortcut icon" href="./img/mlp.png" type="image/x-icon">
@@ -11,6 +11,10 @@
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anaheim&display=swap">
     <script src="./js/vendor/marked.min.js" defer></script>
     <script src="./js/vendor/purify.min.js" defer></script>
+    <script src="./js/vendor/turndown.min.js" defer></script>
+    <script src="./js/vendor/turndown-plugin-gfm.min.js" defer></script>
+    <script src="./js/vendor/zstd.min.js" defer></script>
+    <script src="./js/mlp.js" defer></script>
     <script src="./js/script.js" defer></script>
 </head>
 <body>
@@ -25,6 +29,9 @@
             <input type="file" id="fileOpen" style="display: none;">
             <button id="openBtn"><i class="fa fa-folder-open"></i> Open</button>
             <button id="saveBtn"><i class="fa fa-save"></i> Save</button>
+            <button id="saveAsBtn"><i class="fa fa-files-o"></i> Save As</button>
+            <input type="file" id="keyfileInput" style="display: none;">
+            <button id="encryptBtn" title="Save as encrypted .mlp"><i class="fa fa-lock"></i> Encrypt</button>
             <input type="file" id="imageUpload" accept="image/*" style="display: none;">
             <button id="imageBtn"><i class="fa fa-image"></i> Image</button>
             <button id="boldBtn"><i class="fa fa-bold"></i></button>
@@ -52,5 +59,10 @@
             <div class="color-preview" id="currentColorPreview"></div>
         </div>
     </div>
+
+    <dialog id="appDialog">
+        <div id="dialogText"></div>
+        <div id="dialogButtons"></div>
+    </dialog>
 </body>
 </html>
