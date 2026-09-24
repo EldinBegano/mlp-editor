@@ -9,6 +9,8 @@
     <link rel="stylesheet" href="./style/index.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anaheim&display=swap">
+    <script src="./js/vendor/marked.min.js" defer></script>
+    <script src="./js/vendor/purify.min.js" defer></script>
     <script src="./js/script.js" defer></script>
 </head>
 <body>
@@ -18,6 +20,7 @@
         <div id="toolbar">
             <img src="./img/mlp.png" alt="MLP Logo" style="height: 30px; margin-right: 10px;">
             <button id="newBtn"><i class="fa fa-file"></i> New</button>
+            <input type="file" id="fileOpen" style="display: none;">
             <button id="openBtn"><i class="fa fa-folder-open"></i> Open</button>
             <button id="saveBtn"><i class="fa fa-save"></i> Save</button>
             <input type="file" id="imageUpload" accept="image/*" style="display: none;">

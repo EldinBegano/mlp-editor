@@ -1,5 +1,7 @@
-let currentFilePath = null;
-let words = [];
+let currentFileName = null;
+let currentFileHandle = null;
+let isDirty = false;
+let words = new Set();
 let suggestionBox;
 let editor;
 let statusBar;
@@ -29,6 +31,7 @@ document.addEventListener("DOMContentLoaded", function() {
     });
 
     editor.addEventListener('input', function () {
+        setDirty(true);
         updateWordList();
         let lastWord = getLastWord();
         showSuggestions(lastWord);
@@ -61,17 +64,34 @@ document.addEventListener("DOMContentLoaded", function() {
         }
     });
 
-    editor.addEventListener('dragover', (event) => {
-        event.preventDefault();
+    document.addEventListener('dragover', (event) => {
+        if (event.dataTransfer.types.includes('Files')) {
+            event.preventDefault();
+        }
     });
-    
-    editor.addEventListener('drop', (event) => {
-        event.preventDefault();
-        handleDrop(event);
+
+    document.addEventListener('drop', (event) => {
+        if (event.dataTransfer.types.includes('Files')) {
+            event.preventDefault();
+            handleDrop(event);
+        }
+    });
+
+    window.addEventListener('beforeunload', (event) => {
+        if (isDirty) {
+            event.preventDefault();
+            event.returnValue = true;
+        }
     });
 
     document.getElementById('newBtn').addEventListener('click', newFile);
     document.getElementById('openBtn').addEventListener('click', openFileDialog);
+    document.getElementById('fileOpen').addEventListener('change', function() {
+        if (this.files[0]) {
+            openFile(this.files[0]);
+        }
+        this.value = '';
+    });
     document.getElementById('saveBtn').addEventListener('click', saveFile);
     document.getElementById('imageBtn').addEventListener('click', () => {
         document.getElementById('imageUpload').click();
@@ -115,39 +135,6 @@ document.addEventListener("DOMContentLoaded", function() {
     
     document.getElementById('toggleModeBtn').addEventListener('click', toggleDarkLightMode);
 
-    if (window.electronAPI) {
-        window.electronAPI.onNewFile(() => {
-            newFile();
-        });
-        
-        window.electronAPI.onFileOpened((data) => {
-            editor.innerHTML = data.content;
-            currentFilePath = data.path;
-            updateStatusBar(`File opened: ${getFileName(data.path)}`);
-        });
-        
-        window.electronAPI.onSaveFile(() => {
-            saveFile();
-        });
-        
-        window.electronAPI.onSaveFileAs(() => {
-            saveFileAs();
-        });
-        
-        window.electronAPI.onSaveComplete((filePath) => {
-            currentFilePath = filePath;
-            updateStatusBar(`File saved: ${getFileName(filePath)}`);
-        });
-        
-        window.electronAPI.onSaveError((error) => {
-            updateStatusBar(`Error saving file: ${error}`);
-        });
-        
-        window.electronAPI.onFileOpenError((error) => {
-            updateStatusBar(`Error opening file: ${error}`);
-        });
-    }
-
     editor.addEventListener('keydown', function(event) {
         if (event.ctrlKey) {
             switch (event.key.toLowerCase()) {
@@ -178,17 +165,93 @@ document.addEventListener("DOMContentLoaded", function() {
 });
 
 function newFile() {
+    if (!confirmDiscard()) {
+        return;
+    }
     editor.innerHTML = "Start writing here...";
-    currentFilePath = null;
+    editor.classList.remove('rendered');
+    currentFileName = null;
+    currentFileHandle = null;
+    setDirty(false);
+    updateWordCount();
     updateStatusBar('New file created');
 }
 
-function openFileDialog() {
-    if (window.electronAPI) {
-        window.electronAPI.openFile();
-    } else {
-        updateStatusBar('File opening not available in browser mode');
+async function openFileDialog() {
+    if (!window.showOpenFilePicker) {
+        document.getElementById('fileOpen').click();
+        return;
     }
+
+    try {
+        const [handle] = await window.showOpenFilePicker();
+        await openFile(await handle.getFile(), handle);
+    } catch (err) {
+        if (err.name !== 'AbortError') {
+            updateStatusBar(`Error opening file: ${err.message}`);
+        }
+    }
+}
+
+async function openFile(file, handle = null) {
+    try {
+        // Same heuristic as git: a NUL byte in the first 8000 bytes means binary
+        const head = new Uint8Array(await file.slice(0, 8000).arrayBuffer());
+        if (head.includes(0)) {
+            updateStatusBar(`Cannot open ${file.name}: not a text file`);
+            return;
+        }
+        if (!confirmDiscard()) {
+            return;
+        }
+        const text = (await file.text()).replace(/\r\n?/g, '\n');
+        renderFileContent(text, file.name);
+    } catch (err) {
+        updateStatusBar(`Error opening file: ${err.message}`);
+        return;
+    }
+
+    currentFileName = file.name;
+    currentFileHandle = handle;
+    setDirty(false);
+    updateWordList();
+    updateWordCount();
+    updateStatusBar(`File opened: ${file.name}`);
+}
+
+function renderFileContent(text, fileName) {
+    const extension = fileName.includes('.') ? fileName.split('.').pop().toLowerCase() : '';
+    // No <style> (would restyle the whole app) and no ids (could shadow the app's own elements)
+    const sanitizeOptions = { FORBID_TAGS: ['style'], FORBID_ATTR: ['id'] };
+
+    // The editor is pre-wrap; markdown/HTML sources expect normal whitespace collapsing between tags
+    editor.classList.remove('rendered');
+    switch (extension) {
+        case 'md':
+        case 'markdown':
+            editor.innerHTML = DOMPurify.sanitize(marked.parse(text), sanitizeOptions);
+            editor.classList.add('rendered');
+            break;
+        case 'html':
+        case 'htm':
+            editor.innerHTML = DOMPurify.sanitize(text, sanitizeOptions);
+            editor.classList.add('rendered');
+            break;
+        case 'mlp':
+            editor.innerHTML = DOMPurify.sanitize(text, sanitizeOptions);
+            break;
+        default:
+            editor.textContent = text;
+    }
+}
+
+function confirmDiscard() {
+    return !isDirty || confirm('You have unsaved changes. Discard them?');
+}
+
+function setDirty(dirty) {
+    isDirty = dirty;
+    document.title = `${isDirty ? '*' : ''}${currentFileName ? currentFileName + ' – ' : ''}MLP Text Editor`;
 }
 
 function saveFile() {
@@ -196,119 +259,63 @@ function saveFile() {
         updateStatusBar('Nothing to save');
         return;
     }
-    
-    if (window.electronAPI) {
-        if (currentFilePath) {
-            window.electronAPI.saveFile(editor.innerHTML);
-        } else {
-            saveFileAs();
-        }
-    } else {
-        updateStatusBar('File saving not available in browser mode');
-    }
-}
 
-function saveFile() {
-    if (editor.innerHTML === "Start writing here...") {
-        updateStatusBar('Nothing to save');
-        return;
-    }
-    
-    if (window.electronAPI) {
-        const content = editor.innerHTML;
-        
-        if (currentFilePath) {
-            window.electronAPI.saveFile(content);
-        } else {
-            saveFileAs();
-        }
-    } else {
-        updateStatusBar('File saving not available in browser mode');
-    }
-}
-
-function saveFileAs() {
-    if (editor.innerHTML === "Start writing here...") {
-        updateStatusBar('Nothing to save');
-        return;
-    }
-    
-    if (window.electronAPI) {
-        const content = editor.innerHTML;
-        window.electronAPI.saveFile(content);
-    } else {
-        updateStatusBar('File saving not available in browser mode');
-    }
+    updateStatusBar('File saving not available in browser mode');
 }
 
 function insertImage(event) {
     const file = event.target.files[0];
     if (file) {
-        const reader = new FileReader();
-        reader.onload = function(e) {
-            const img = document.createElement('img');
-            img.src = e.target.result;
-            img.style.maxWidth = '100%';
-            
-            const selection = window.getSelection();
-            if (selection.rangeCount > 0) {
-                const range = selection.getRangeAt(0);
-                range.deleteContents();
-                range.insertNode(img);
-                
-                range.setStartAfter(img);
-                range.setEndAfter(img);
-                selection.removeAllRanges();
-                selection.addRange(range);
-            } else {
-                editor.appendChild(img);
-            }
-            
-            updateStatusBar('Image inserted');
-            document.getElementById('imageUpload').value = '';
-        };
-        reader.readAsDataURL(file);
+        insertImageFile(file);
+        document.getElementById('imageUpload').value = '';
     }
+}
+
+function insertImageFile(file) {
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        const img = document.createElement('img');
+        img.src = e.target.result;
+        img.style.maxWidth = '100%';
+
+        const selection = window.getSelection();
+        if (selection.rangeCount > 0 && editor.contains(selection.getRangeAt(0).commonAncestorContainer)) {
+            const range = selection.getRangeAt(0);
+            range.deleteContents();
+            range.insertNode(img);
+
+            range.setStartAfter(img);
+            range.setEndAfter(img);
+            selection.removeAllRanges();
+            selection.addRange(range);
+        } else {
+            editor.appendChild(img);
+        }
+
+        setDirty(true);
+        updateStatusBar('Image inserted');
+    };
+    reader.readAsDataURL(file);
 }
 
 function handleDrop(event) {
     const file = event.dataTransfer.files[0];
-    if (file && file.type.startsWith('image/')) {
-        const reader = new FileReader();
-        reader.onload = function(e) {
-            const img = document.createElement('img');
-            img.src = e.target.result;
-            img.style.maxWidth = '100%';
-            
-            const selection = window.getSelection();
-            if (selection.rangeCount > 0) {
-                const range = selection.getRangeAt(0);
-                range.deleteContents();
-                range.insertNode(img);
-                
-                range.setStartAfter(img);
-                range.setEndAfter(img);
-                selection.removeAllRanges();
-                selection.addRange(range);
-            } else {
-                editor.appendChild(img);
-            }
-            
-            updateStatusBar('Image inserted');
-        };
-        reader.readAsDataURL(file);
+    if (!file) {
+        return;
+    }
+
+    if (file.type.startsWith('image/')) {
+        insertImageFile(file);
+    } else {
+        openFile(file);
     }
 }
 
 function updateWordList() {
     let text = editor.innerText;
     let wordsArray = text.match(/\b\w{2,}\b/g) || [];
-    
-    wordsArray.forEach(word => {
-        if (!words.includes(word.toLowerCase())) {
-            words.push(word.toLowerCase());
-        }
-    });
+
+    wordsArray.forEach(word => words.add(word.toLowerCase()));
 }
 
 function getLastWord() {
@@ -323,7 +330,7 @@ function showSuggestions(givenChars) {
         return;
     }
 
-    let matches = words.filter(word => word.startsWith(givenChars.toLowerCase()));
+    let matches = [...words].filter(word => word.startsWith(givenChars.toLowerCase()));
 
     if (matches.length === 0) {
         suggestionBox.style.display = 'none';
@@ -373,12 +380,8 @@ function insertWord(word) {
 function updateStatusBar(message) {
     statusBar.textContent = message;
     setTimeout(() => {
-        statusBar.textContent = currentFilePath ? `Editing: ${getFileName(currentFilePath)}` : 'Ready';
+        statusBar.textContent = currentFileName ? `Editing: ${currentFileName}` : 'Ready';
     }, 3000);
-}
-
-function getFileName(filePath) {
-    return filePath.split(/[\\/]/).pop();
 }
 
 function toggleDarkLightMode() {
@@ -455,6 +458,6 @@ function rgbToHex(rgb) {
 
 function updateWordCount() {
     let text = editor.innerText.trim();
-    let wordCount = text.length === 0 ? 0 : text.split(/\s+/).length;
+    let wordCount = text.length === 0 || text === "Start writing here..." ? 0 : text.split(/\s+/).length;
     document.getElementById('wordCount').textContent = `Words: ${wordCount}`;
 }

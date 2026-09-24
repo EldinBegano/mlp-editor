@@ -17,7 +17,7 @@ body {
     color: #333;
   }
   
-  h2 {
+  body > h2 {
     font-size: 18px;
     color: #ffffff;
     margin: 0 0 15px 0;
@@ -27,7 +27,7 @@ body {
     transition: color 0.3s ease;
   }
   
-  body.light-mode h2 {
+  body.light-mode > h2 {
     color: #333;
   }
   
@@ -187,6 +187,45 @@ body {
   
   #editor:focus {
     outline: none;
+  }
+  
+  #editor.rendered {
+    white-space: normal;
+  }
+  
+  #editor pre,
+  #editor code {
+    background-color: rgba(127, 127, 127, 0.15);
+    border-radius: 3px;
+  }
+  
+  #editor pre {
+    padding: 8px 10px;
+    overflow-x: auto;
+  }
+  
+  #editor blockquote {
+    margin-left: 0;
+    padding-left: 12px;
+    border-left: 3px solid rgba(127, 127, 127, 0.5);
+  }
+  
+  #editor table {
+    border-collapse: collapse;
+  }
+  
+  #editor th,
+  #editor td {
+    border: 1px solid rgba(127, 127, 127, 0.5);
+    padding: 4px 8px;
+  }
+  
+  #editor a {
+    color: #6cb6ff;
+  }
+  
+  body.light-mode #editor a {
+    color: #0366d6;
   }
   
   .image-preview {

@@ -1,19 +1,13 @@
 {
   "name": "mlp-text-editor",
   "version": "1.0.0",
-  "description": "MLP Text Editor Desktop Application",
-  "main": "main.js",
-  "scripts": {
-    "start": "electron .",
-    "package": "electron-packager . MLPTextEditor --platform=darwin,linux --arch=x64 --icon=./img/mlp.png --out=dist/ --overwrite"
-  },
+  "description": "MLP Text Editor browser application",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/EldinBegano/MLPEditor.git"
   },
   "keywords": [
     "text-editor",
-    "electron",
     "mlp"
   ],
   "author": "MLP",
@@ -22,9 +16,5 @@
   "bugs": {
     "url": "https://github.com/EldinBegano/MLPEditor/issues"
   },
-  "homepage": "https://github.com/EldinBegano/MLPEditor#readme",
-  "devDependencies": {
-    "electron": "^35.7.5",
-    "electron-packager": "^17.1.2"
-  }
+  "homepage": "https://github.com/EldinBegano/MLPEditor#readme"
 }
